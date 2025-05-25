@@ -6,13 +6,12 @@ import zipfile
 import http.server
 import socketserver
 import webbrowser
-import argparse
 import atexit
 import shutil
 from pathlib import Path
 try:
     import tkinter as tk
-    from tkinter import filedialog
+    from tkinter import filedialog, messagebox
 except ImportError:
     tk = None
 
@@ -39,11 +38,23 @@ class AllureViewer:
         return (Path(path) / "index.html").exists()
 
     def extract_zip(self, zip_path):
-        """Extract report zip to repository temp directory"""
+        """Extract report zip and handle nested folder structure"""
         REPO_TEMP.mkdir(exist_ok=True)
-        extract_path = REPO_TEMP / Path(zip_path).stem
+        base_extract = REPO_TEMP / Path(zip_path).stem
+        extract_path = base_extract
+
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_path)
+
+        # Auto-detect single subdirectory with report
+        items = list(extract_path.iterdir())
+        if len(items) == 1 and items[0].is_dir():
+            if self.validate_report(items[0]):
+                final_path = items[0]
+                # Cleanup parent directory instead of nested path
+                self.cleanup_paths.append(extract_path)
+                return final_path
+
         self.cleanup_paths.append(extract_path)
         return extract_path
 
@@ -67,7 +78,7 @@ class AllureViewer:
 
             # Validate Allure report
             if not self.validate_report(path):
-                raise ValueError("No valid Allure report found")
+                raise ValueError(f"No valid Allure report in {path}")
 
             # Start server
             port = self.start_server(path)
@@ -82,24 +93,42 @@ class AllureViewer:
             
         except Exception as e:
             self.cleanup()
-            print(f"Error: {str(e)}")
+            messagebox.showerror("Error", str(e)) if tk else print(f"Error: {str(e)}")
             sys.exit(1)
 
 def gui_main():
-    """Graphical file selection mode"""
+    """Graphical interface with explicit folder selection"""
     root = tk.Tk()
     root.withdraw()
-    path = filedialog.askopenfilename(
-        title="Select Allure Report (folder or ZIP)",
-        filetypes=[("Allure Reports", "*.zip"), ("Allure Folder", "")]
+    
+    # Create selection dialog
+    choice = messagebox.askquestion(
+        "Report Type",
+        "Select report type:",
+        detail="Choose 'Yes' for ZIP file, 'No' for folder",
+        icon="question"
     )
+    
+    path = None
+    if choice == "yes":
+        path = filedialog.askopenfilename(
+            title="Select Allure Report ZIP",
+            filetypes=[("ZIP Files", "*.zip")]
+        )
+    else:
+        path = filedialog.askdirectory(
+            title="Select Allure Report Folder"
+        )
+    
     if path:
         AllureViewer().open_report(path)
+    else:
+        messagebox.showwarning("Cancelled", "No report selected")
 
 def cli_main():
     """Command line mode"""
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs="?", help="Path to report folder/ZIP")
+    parser.add_argument("path", help="Path to report folder/ZIP")
     args = parser.parse_args()
     
     if args.path:
