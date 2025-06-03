@@ -1,4 +1,3 @@
-# save as allure_offline_viewer.py
 import sys
 import os
 import tempfile
